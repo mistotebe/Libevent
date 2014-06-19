@@ -97,6 +97,20 @@ const struct bufferevent_ops bufferevent_ops_socket = {
 	be_socket_ctrl,
 };
 
+static void be_fdpair_destruct(struct bufferevent *);
+
+const struct bufferevent_ops bufferevent_ops_fdpair = {
+	"fdpair",
+	evutil_offsetof(struct bufferevent_private, bev),
+	be_socket_enable,
+	be_socket_disable,
+	NULL, /* unlink */
+	be_fdpair_destruct,
+	be_socket_adj_timeouts,
+	be_socket_flush,
+	be_socket_ctrl,
+};
+
 #define be_socket_add(ev, t)			\
 	bufferevent_add_event_((ev), (t))
 
@@ -317,12 +331,19 @@ struct bufferevent *
 bufferevent_socket_new(struct event_base *base, evutil_socket_t fd,
     int options)
 {
+	return bufferevent_fdpair_new(base, fd, fd, options);
+}
+
+struct bufferevent *
+bufferevent_fdpair_new(struct event_base *base, evutil_socket_t fdr,
+    evutil_socket_t fdw, int options)
+{
 	struct bufferevent_private *bufev_p;
 	struct bufferevent *bufev;
 
 #ifdef _WIN32
-	if (base && event_base_get_iocp_(base))
-		return bufferevent_async_new_(base, fd, options);
+	if (base && (fdr == fdw) && event_base_get_iocp_(base))
+		return bufferevent_async_new_(base, fdr, options);
 #endif
 
 	if ((bufev_p = mm_calloc(1, sizeof(struct bufferevent_private)))== NULL)
@@ -336,9 +357,9 @@ bufferevent_socket_new(struct event_base *base, evutil_socket_t fd,
 	bufev = &bufev_p->bev;
 	evbuffer_set_flags(bufev->output, EVBUFFER_FLAG_DRAINS_TO_FD);
 
-	event_assign(&bufev->ev_read, bufev->ev_base, fd,
+	event_assign(&bufev->ev_read, bufev->ev_base, fdr,
 	    EV_READ|EV_PERSIST|EV_FINALIZE, bufferevent_readcb, bufev);
-	event_assign(&bufev->ev_write, bufev->ev_base, fd,
+	event_assign(&bufev->ev_write, bufev->ev_base, fdw,
 	    EV_WRITE|EV_PERSIST|EV_FINALIZE, bufferevent_writecb, bufev);
 
 	evbuffer_add_cb(bufev->output, bufferevent_socket_outbuf_cb, bufev);
@@ -592,6 +613,25 @@ be_socket_destruct(struct bufferevent *bufev)
 		EVUTIL_CLOSESOCKET(fd);
 }
 
+static void
+be_fdpair_destruct(struct bufferevent *bufev)
+{
+	struct bufferevent_private *bufev_p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	evutil_socket_t fdr, fdw;
+	EVUTIL_ASSERT(bufev->be_ops == &bufferevent_ops_socket);
+
+	fdr = event_get_fd(&bufev->ev_read);
+	fdw = event_get_fd(&bufev->ev_write);
+
+	if (bufev_p->options & BEV_OPT_CLOSE_ON_FREE) {
+		if (fdr >= 0)
+			EVUTIL_CLOSESOCKET(fdr);
+		if (fdw >= 0 && fdw != fdr)
+			EVUTIL_CLOSESOCKET(fdw);
+	}
+}
+
 static int
 be_socket_adj_timeouts(struct bufferevent *bufev)
 {
@@ -637,6 +677,7 @@ be_socket_setfd(struct bufferevent *bufev, evutil_socket_t fd)
 	event_assign(&bufev->ev_write, bufev->ev_base, fd,
 	    EV_WRITE|EV_PERSIST|EV_FINALIZE, bufferevent_writecb, bufev);
 
+	/* XXXX should we be enabled only we have both? */
 	if (fd >= 0)
 		bufferevent_enable(bufev, bufev->enabled);
 

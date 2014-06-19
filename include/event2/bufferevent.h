@@ -190,6 +190,27 @@ EVENT2_EXPORT_SYMBOL
 struct bufferevent *bufferevent_socket_new(struct event_base *base, evutil_socket_t fd, int options);
 
 /**
+  Create a new socket bufferevent over two file descriptors.
+
+  @param base the event base to associate with the new bufferevent.
+  @param fdr the file descriptor from which data is read.
+	    This file descriptor is not allowed to be a pipe(2).
+	    It is safe to set the fd to -1, so long as you later
+	    set it with bufferevent_setfd.
+  @param fdw the file descriptor from which data is read and written to.
+	    This file descriptor is not allowed to be a pipe(2).
+	    It is safe to set the fd to -1, so long as you later
+	    set it with bufferevent_setfd.
+  @param options Zero or more BEV_OPT_* flags
+  @return a pointer to a newly allocated bufferevent struct, or NULL if an
+	  error occurred
+  @see bufferevent_free()
+  */
+EVENT2_EXPORT_SYMBOL
+struct bufferevent *bufferevent_fdpair_new(struct event_base *base,
+	evutil_socket_t fdr, evutil_socket_t fdw, int options);
+
+/**
    Launch a connect() attempt with a socket-based bufferevent.
 
    When the connect succeeds, the eventcb will be invoked with
